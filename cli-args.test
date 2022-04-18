@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+
+source $BASHJAZZ_PATH/utest/utest.sh
+source cli-args.sh
+
+utest begin CliArgs \
+'Parses and separates cli-args into positional & non-positional'
+
+  utest begin extract_allowed_args \
+  'Extracts names of allowed short (-s) and --long arguments.'
+     utest cmd CliArgs -c extract_allowed_args \
+     value-required --value-required-args=a:arg1,b:arg2,arg3,x,y,z \
+                    --something-else=something_elses_value
+     utest assert "$UTOUT" == 'a:arg1 b:arg2 arg3 x y z'
+  utest end extract_allowed_args
+
+
+  utest begin extract_allowed_args_synonyms \
+  'Separate one letter synonyms of required and valueless args into ARG_SYNONYMS'
+    utest cmd CliArgs -c extract_allowed_args_with_synonyms \
+      a b u:url o:output-fn encoding x y z
+      utest assert "$UTOUT" == 'u:url o:output-fn'
+  utest end extract_allowed_args_synonyms
+
+  utest begin get_long_arg_name1 \
+  'Looks up a long argument name by its one-letter synonym'
+    utest cmd CliArgs -c get_long_arg_name u u:url
+    utest assert "$UTOUT" == 'url'
+  utest end get_long_arg_name1
+
+utest end CliArgs
