@@ -1,0 +1,45 @@
+DONATIONS
+---------
+
+If you find this project useful, you can donate to it using the following
+cryptocurrencies and addresses.
+
+    Bitcoin:    36GN5qTZUaRmQA2fwAycuzyVwgF2AvJqbB
+
+    Ethereum:   0x5e853e5d5a4575b84b6add3ee0f71a1431003697
+
+    Litecoin:   MH5kWxiicSkgJQQzMXxP787Q1gkxm9y4pd
+
+    Dogecoin:   DQmF1ZJUSQq6A25QjNUsjcUFs8uxRVF8BZ
+
+    Monero:     429kM9JapwKjocrrrV2xgoNZY2Hj8V1qghW7Lu4qCJdsSPUsoaxVT9B4Q83RRiP8iG522jGieR2KhXBqqhuRuaapEysbBe3
+
+    Bitcoin
+    Cash:      qq3t79g426jx5gdx3z9zlarw45ndffn82q2y5qqxzc
+
+
+    Stablecoins:
+
+      USDT:
+        on Ethereum (ERC20): 0xc708bb4b9f2cedf73d0f7a8dd7714d79d29ab489
+        on Solana:           C4YZRRdwdmTAVDz5e28hbZ4qyEmb2k9SfxqzxmvJxGaa
+        on TRC:              TEoRNV7d6UCrPvF7hs3UihwwtSZmTqzvc1
+        on OMNI:             16hyv2kuVXD1C3r3Jzjos7g39RMLXqrFnS 
+
+      USDC:
+        on Ethereum (ERC20): 0xe58937e4177b1af861abb68d03bfe852857514e8
+        on Solana:           HPog28TU8p4CqogHG4vc3yX4RsAAprgjFqXBXm72syKj
+        on TRC:              TKcqvjbpYTku3GJm2DapF7FjN6rwzngWwA
+
+
+Traditional international wire-transfers are also accepted, but this has to
+be arranged. Please contact project maintainer(s) for details:
+https://bashjazz.orion3.space/contact.html
+
+If you donate, feel free to email and request a feature, a bug fix or anything
+else related. I can't guarantee it, but since I've been working on this software
+and using it myself for over a year I do think there must be people like myself
+out there, who would find this tool immensely helpful. It's not going to
+suddenly stop working - especially because it's just Bash scripts. So every
+feature or bugfix added stays there and will, in most likelihood, keep working
+without a glitch - for years to come - and without much need for maintenance.

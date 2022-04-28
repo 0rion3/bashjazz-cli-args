@@ -40,55 +40,73 @@ CliArgs() {
     shift 2
   fi
 
-  local INITIAL_ARGS="$@"
+  local INITIAL_ARGS="${@}"
+
+  local IGNORE_ARG_ERRORS="$(echo "$INITIAL_ARGS" | grep '\-\-ignore-arg-errors')"
+  if [[ -n $IGNORE_ARG_ERRORS ]]; then
+    INITIAL_ARGS="$(echo "$IGNORE_ARG_ERRORS" | sed -E 's/--ignore-arg-errors//')"
+  fi
+
 
   local ARG_VALUE_TRUE="${ARG_VALUE_TRUE:-yes}"
   local ARG_VALUE_FALSE="${ARG_VALUE_FALSE:-no}"
 
+  strip_arg_name_from_dashes() {
+    echo "$1" | sed 's/--?//'
+  }
+
   extract_allowed_args() {
     local arg_type="$1"
     shift
-    echo "$@"                                  | \
-      grep -oE "\-\-$arg_type-args=[^ ]+"      | \
-      sed -E 's/.+=//'                         | \
+    echo "$@"                             | \
+      grep -oE "\-\-$arg_type-args=[^ ]+" | \
+      sed -E 's/.+=//'                    | \
       sed 's/,/ /g'
   }
 
-  extract_allowed_args_with_synonyms() {
+  extract_allowed_args_synonyms() {
+    local result
     for a in "${@}"; do
-      if [[ "$a" == *":"* ]]; then echo -n "$a "; fi
+      if [[ "$a" == *":"* ]]; then result+="$( echo $a | sed -E 's/:[^\s]+/ /g')"; fi
     done
-  }
-
-  get_long_arg_name() {
-    local short_name=$1
-    local both_names="$2"
-    echo "${both_names:-${ARG_SYNONYMS[@]}}" | sed -E "s/^$1://"
+    echo "$result" | xargs # removes the trailing space
   }
 
   get_value_for() {
     local result="${VALUE_REQUIRED_ARGS[$1]}"
     echo "$result"
-    #echo "${result:-${VALUELESS_ARGS[$1]}}"
   }
 
-  # ATTENTION: here the program will exit if the wrong an individual nested 
-  # is being called (which would be the case with unit testing).
-  test -n $CALL_NESTED && $CALL_NESTED $@ && exit $?
+  # ATTENTION: here the program will exit if a non-existent nested function
+  # was called (this line is mainly for "bashjazz/utest" (unit-testing)
+  # compliance.
+  if [[ -n $CALL_NESTED ]]; then
+    $CALL_NESTED $@
+    exit $?
+  fi
 
   # This is not the final result of extracting names, we need them as strings
   # to easily pass to another function, which extracts synonyms and finalizes
   # the process VALUE_REQUIRED_ARGS and VALUELESS_ARGS
-  VALUE_REQUIRED_ARGS=( $(extract_allowed_args 'value-required' $INITIAL_ARGS) )
-  VALUELESS_ARGS=( $(extract_allowed_args 'valueless' $INITIAL_ARGS) )
+  VALUE_REQUIRED_ARGS=( $(extract_allowed_args 'value-required' ${INITIAL_ARGS[@]}) )
+  if [[ -n "${VALUE_REQUIRED_ARGS[@]}" ]]; then shift; fi
+  VALUELESS_ARGS=( $(extract_allowed_args 'valueless' ${INITIAL_ARGS[@]}) )
+  if [[ -n "${VALUELESS_ARGS[@]}" ]]; then shift; fi
 
   # The function called below only returns something if
   # the respective variable isn't empty (meaning, the --value-required-args
   # and/or --valueless-args arguments were provided and need to be removed
   # from $INITIAL_ARGS.
-  local arg_synonyms1=( extract_allowed_args_with_synonyms "${VALUE_REQUIRED_ARGS[@]}")
-  local arg_synonyms2=( extract_allowed_args_with_synonyms "${VALUELESS_ARGS[@]}"     )
-  declare -g ARG_SYNONYMS=( "${arg_synonyms1[@]}" "${arg_synonyms2[@]}" )
+  local arg_synonyms_str="${VALUE_REQUIRED_ARGS[@]} ${VALUELESS_ARGS[@]}"
+  ARG_SYNONYMS=( $(echo "$arg_synonyms_str" | \
+  grep -oE '[a-zA-Z]:[a-zA-Z]+' | sed -E 's/:[^ ]+/ /g') )
+
+  VALUE_REQUIRED_ARGS=(
+    $(echo "${VALUE_REQUIRED_ARGS[@]}" | sed -E 's/(^| )[a-zA-Z]:/ /g')
+  )
+  VALUELESS_ARGS=(
+    $(echo "${VALUELESS_ARGS[@]}" | sed -E 's/(^| )[a-zA-Z]:/ /g')
+  )
 
   local one_dash_arg_name
 
@@ -109,8 +127,8 @@ CliArgs() {
         Array_contains $arg_name ${VALUELESS_ARGS[@]}
       )"
 
-      if [[ -z "$arg_allowed" ]]; then
-        echo "  Bad argument: $arg_name"
+      if [[ -z "$arg_allowed" ]] && [[ -z "$IGNORE_ARG_ERRORS" ]]; then
+        >&2 echo -e "${Red}Argument not allowed: ${Yellow}--$arg_name"
         exit 1
       fi
 
@@ -119,8 +137,8 @@ CliArgs() {
         NAMED_ARGS["$arg_name"]="$arg_value"
       elif [[ -n "$(Array_contains $arg_name ${VALUELESS_ARGS[@]})" ]]; then
         NAMED_ARGS["$arg_name"]="$ARG_VALUE_TRUE"
-      else
-        echo "  Bad argument: --$arg_name"
+      elif [[ -z "$IGNORE_ARG_ERRORS" ]]; then
+        >&2 echo -e "Argument requires value: ${Yellow}--$arg_name${Red}\n"
         exit 1
       fi
 
@@ -139,8 +157,8 @@ CliArgs() {
         Array_contains $arg_name ${VALUELESS_ARGS[@]}
       )"
 
-      if [[ -z "$arg_allowed" ]]; then
-        echo "  Bad argument: $arg_name"
+      if [[ -z "$arg_allowed" ]] && [[ -z "$IGNORE_ARG_ERRORS" ]]; then
+        echo -e "Argument not allowed: -${Yellow}$arg_name${Red}\n"
         exit 1
       fi
 
@@ -166,5 +184,11 @@ CliArgs() {
     fi
 
   done
+
+  echo "VALUELESS_ARGS=${VALUELESS_ARGS[@]}"
+  echo "VALUE_REQUIRED_ARGS=${VALUE_REQUIRED_ARGS[@]}"
+  echo "NAMED_ARGS=${NAMED_ARGS[@]}"
+  echo "POS_ARGS=${POS_ARGS[@]}"
+  echo "ARG_SYNONYMS=${ARG_SYNONYMS[@]}"
 
 }
