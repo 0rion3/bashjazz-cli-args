@@ -26,82 +26,86 @@ CliArgs() {
   # of the actual invocation of `CliArgs()` or it'll be assigned automatically,
   # by fetching caller-script filename. If, for some, reason automatic assignment
   # fails, NAME will given the value "default".
-  local NAME="$CALLER"
+  #
+  local NAME="$CALLER" # can only contain alphanumeric characters and "_"
   if [[ -z "$NAME" ]]; then
-    caller | grep -ovE '^[0-9]+' | grep -ovE '.[a-zA-Z]$' | \
+    caller | grep -ovE '^[0-9]+' | grep -ovE '.[a-zA-Z]$' | sed 's/-/_/g' |
       read _ NAME # reads caller script name into the $NAME variable
     NAME="${NAME:-default}"
   fi
 
-  # This is a unique global associative array which stores all the information
-  # about both arguments definitions (or rules: which arguments are required,
-  # which are allowed, but optional etc.) with each item of that array being
-  # a pseudo-array - a string separated by a special $ARG_ARRAY_SEPARATOR
-  # These pseudo-arrays will be used by other nested functions of CliArgs()
-  # to return whatever the user requests.
-  declare -gA "ARG_DATA_FOR_${NAME}"
-
-  strip_from_dashes() {
-    echo "$1" | sed 's/--?//'
-  }
-
   extract_synonyms() {
-    echo $(echo "${@}"              | \
-      grep -oE '[a-zA-Z]:[a-zA-Z]+' | \
+    echo $(echo "${@}" | \
       sed -E 's/:[^ ]+/ /g')
   }
 
-  get_long_name_for_synonym() {
-    local arg_name=$1
-    shift
-    echo "$@" | grep -o "$arg_name:[^ ]*" | grep -o ':[^: ]*' | cut -c2-
+  get_arg_name() {
+    local arg_name=$(echo $1 | sed 's/-/_/g')
+    local arg_names=( ${!ARG_DEF_all_args_FOR_$NAME} )
+    local synonyms=(  ${!ARG_DEF_synonyms_FOR_$NAME} )
+
+    local real_arg_name="$(echo "${arg_names[@]}" | grep -o "$arg_name")"
+
+    if [[ -z "$real_arg_name" ]]; then
+      local item_index=$(${arg_synonyms[@]/$arg_name//} | \
+        cut -d/ -f1 | wc -w | tr -d ' ')
+    fi
+
+    local real_arg_name="${arg_names[$item_index]}"
+    echo "$real_arg_name"
   }
 
   get_value_for() {
+    # TODO
     return 0
   }
 
-  # Prints data held in keys from ARG_DATA_FOR_$NAME associative array.
-  # Used by define() and parse() to print that info out. Why print when
-  # data is already stored in a global variable? At this point, it's for
-  # unit-testing, because $BASHJAZZ_PATH/utest uses subroutines, which means
-  # global variables stay within their confines and cannot be accessed
-  # in unit tests. Printing them out solves this issue.
-  print_args_data() {
-    local var_names="$@"
-    # TODO: print argument data from the global associative array ARG_DATA_FOR_$NAME
+  add_arg_data_for_name() {
+    local var_prefix="$1"
+    # xargs removes leading/trailing whitespace here
+    local global_var_value="$(echo $2 | xargs)"
+    local global_var_name="ARG_DEF_${var_prefix}_FOR_$NAME"
+
+    declare -g "$global_var_name"="$global_var_value"
+    echo "$global_var_name=\"${global_var_value:-$ARG_VALUE_TRUE}\""
   }
 
   define() {
 
-    local -A args
-    local -a synonyms
-
-    local args[value]="$VALUE_ARGS"
-    local args[no_value]="$NO_VALUE_ARGS"
-    local args[default_value]="$DEFAULT_VALUE_ARGS"
-    local args[required]="$REQUIRED_ARGS"
+    local allowed=(
+      no_value_args default_value_args value_args required_args ignore_errors
+    )
+    local args=( ${@} )
+    local out
+    local all_args
 
     for k in "${!args[@]}"; do
-      synonyms=( "${synonyms[@]}" "$(extract_synonyms ${args[$k]})" )
+
+      local arg="${args[$k]}"
+
+      local arg_name="$(echo "$arg" | \
+        grep -o '^\-\-[a-z\-]*' | sed 's/^--//' | sed 's/-/_/g')"
+
+      local value="$(echo "$arg" | sed -E "s/--[a-z\-]+=?//g" | sed 's/,/ /g')"
+
+      Array_contains $arg_name "${allowed[@]}" > /dev/null || continue
+
+      if [[ "$arg_name" =~ ^(no_)?value_args$ ]]; then
+        all_args+="$value "
+      fi
 
       # The next line of code removes the ":" character, which means we only
       # keeps the two-dash argument names in these variables or,
       # if a cli-arg only has a one-dash version, then that's the one that will
       # be kept. This is fine, because get_value_for() will take either a
       # synonym or an actual name and return a value we'll extract later on.
-
-
-      args[$k]="$(echo "${args[$k]}" | sed -E 's/(^| )[a-zA-Z]:/ /g')"
-      # TODO: assign this value above to the global associate
-      # array ARG_DATA_FOR_$NAME. Possible solution:
-      #
-      #   IFS= read -r -d '' "ARG_DATA_FOR_$NAME[$k]" <<< "${args[$k]}"
-
-      # TODO MAYBE: call print_args_data() with proper argument names
-
+      value="$(echo "$value" | sed -E 's/(^| )[a-zA-Z]:/ /g')"
+      echo "$(add_arg_data_for_name $arg_name "$value")"
     done
 
+    local synonyms="$(extract_synonyms "$all_args")"
+    echo "$(add_arg_data_for_name 'all_args' "$all_args")"
+    echo "$(add_arg_data_for_name 'synonyms' "$synonyms")"
   }
 
   parse() {
@@ -111,6 +115,19 @@ CliArgs() {
     while $# -gt 0; do
       arg="$1"
       shift
+
+      # $arg is either a one-dash or a two-dash argument such as
+      # -i or --input-fn
+      if [[ "$arg" == "-"* ]]; then
+        echo 0 > /dev/null
+      # Case for when it's something like my-script -i file.txt
+      # and $arg == "file.txt"
+      elif [[ -n "$value_for_prev_arg" ]]; then
+        echo 0 > /dev/null
+      # This is a positional argument
+      else
+        echo 0 > /dev/null
+      fi
 
       # Process $arg in several steps:
       # 1. If argument starts with a dash or two dashes - it's non-positional:
@@ -129,90 +146,9 @@ CliArgs() {
       # 
       #    2) Otherwise treat this argument as a positional argument.
 
-      # TODO MAYBE: call print_args_data() with proper argument names
     done
 
   }
-
-
-  ########### TODO: part of that code should end up in the parse() function
-  local one_dash_arg_name
-
-  for arg in "${@}"; do
-
-    # Two-dash arguments - it's a long argument with the value being provided
-    # after the "=" character or assigned from $ARG_TRUE_VALUE (just because of
-    # this argument's mere presence).
-
-    if [[ "$arg" == "--"* ]]; then
-      # Remove the two leading dashes, replace = with a space so we can convert an argument
-      # into a two item-array where the 1st item is the name of the argument and the 2nd argument
-      # is its value.
-      arg_name="$(echo "$arg" | grep -oE '\-\-[a-z][a-z0-9\-]+' | sed 's/^--//')"
-
-      local arg_allowed="$(
-        Array_contains $arg_name "${VALUE_REQUIRED_ARGS[@]}" || \
-        Array_contains $arg_name ${VALUELESS_ARGS[@]}
-      )"
-
-      if [[ -z "$arg_allowed" ]] && [[ -z "$IGNORE_ARG_ERRORS" ]]; then
-        >&2 echo -e "${Red}Argument not allowed: ${Yellow}--$arg_name"
-        exit 1
-      fi
-
-      if [[ -n "$(Array_contains $arg_name ${VALUE_REQUIRED_ARGS[@]})" ]]; then
-        arg_value="$(echo "$arg" | grep -voE '\-\-[a-z0-9]=')"
-        NAMED_ARGS["$arg_name"]="$arg_value"
-      elif [[ -n "$(Array_contains $arg_name ${VALUELESS_ARGS[@]})" ]]; then
-        NAMED_ARGS["$arg_name"]="$ARG_VALUE_TRUE"
-      elif [[ -z "$IGNORE_ARG_ERRORS" ]]; then
-        >&2 echo -e "Argument requires value: ${Yellow}--$arg_name${Red}\n"
-        exit 1
-      fi
-
-    # One dash arguments such as `-c` can also require value, but,
-    # technically, the value for such an argument would be a separate item
-    # in the $INITIAL_ARGS array - the next item after the on-dash argument
-    # itself. Or, alternatively, if the one-dash argument is immediately
-    # followed by by a number, such as it would be in `tail -n1`,
-    # we use that number
-    elif [[ $arg == "-"* ]]; then
-
-      arg_name="$(echo "$arg" | grep -oE '[a-zA-Z]' )"
-
-      local arg_allowed="$(
-        Array_contains $arg_name ${VALUE_REQUIRED_ARGS[@]} || \
-        Array_contains $arg_name ${VALUELESS_ARGS[@]}
-      )"
-
-      if [[ -z "$arg_allowed" ]] && [[ -z "$IGNORE_ARG_ERRORS" ]]; then
-        echo -e "Argument not allowed: -${Yellow}$arg_name${Red}\n"
-        exit 1
-      fi
-
-      arg_value="$(echo "$arg" | grep -Eo '[0-9]+$')"
-
-      if [[ -n "$(Array_contains $arg_name ${VALUE_REQUIRED_ARGS[@]})" ]]; then 
-        if [[ -n "$arg_value" ]]; then
-          NAMED_ARGS[$arg_name]="$arg_name"
-        else
-          one_dash_arg_name="$arg_name"
-        fi
-      else
-        NAMED_ARGS[$arg_name]="$ARG_VALUE_TRUE"
-      fi
-
-    # Adding value for the one_dash _argument.
-    elif [[ -n "$one_dash_arg_name" ]]; then
-      NAMED_ARGS[$one_dash_arg_name]="$arg"
-      unset one_dash_arg_name
-    # Everything else is considered a positional argument
-    else
-      POS_ARGS+=("$arg")
-    fi
-
-  done
-  #########################################################################
 
   # ATTENTION: here the program will exit if a non-existent nested function
   # was called.
