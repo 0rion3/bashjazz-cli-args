@@ -1,113 +1,141 @@
 #!/usr/bin/env bash
 source $BASHJAZZ_PATH/utils/array.sh
+source $BASHJAZZ_PATH/utils/quoted_string.sh
 
-# WARNING: this script does not support whitespace in argument values
-
-declare -ga VALUE_REQUIRED_ARGS
-declare -ga VALUELESS_ARGS
-declare -ga ARG_SYNONYMS
-declare -ga POS_ARGS
-declare -gA NAMED_ARGS
-
-# To Separate short one-dash args from their long two-dash arguments
-# equivalents, synonyms are created by using ":" character when describing
-# attributes, with the short, one letter synonym being written first, then colon,
-# then the longer name for the attribute. For instance, if we call the current
-# function with this argument:
-#
-#     --valueless-args=l:list,u:list-updates
-#
-# then `-l` shall be an alias for `--list` and `-u` shall be an alias
-# for `--list-updates`. Therefore, we need to clearly distinguish them,
-# but also make sure that the code below that goes through the actual args
-# passed understands they are synonyms.
-
-
-
-# ATTENTION: the following function is called automatically upon sourcing
-#            this file - it will be called on the last line of this script.
 CliArgs() {
 
-  # For unit-test compliance and allowing to unit-test nested functions,
-  # (but can also be used in other cases we allow to call each individual
-  # function from the nested functions in CliArgs. For this to work,
-  # the first argument should be -n function_name (-c stands for 'call').
-  # The actual calls will be done after function declarations.
-  # Here, we need to to shift the first argument two arguments
-  # (-n and its value) if they're found.
-  if test $1 = '-c'; then
-    local CALL_NESTED="$2"
-    shift 2
+  # The First ARGUMENT to this function is the name of the nested function to
+  # be called. The actual calls will be done after all function declarations.
+  # Here, we need to to shift $@ after we assign the name of the nested function
+  # to the CALL_NESTED variable.
+  local CALL_NESTED="$1"
+  shift
+
+  # Constants (because of the flag -r) used by CLI arguments
+  local -r ARG_VALUE_TRUE="${ARG_VALUE_TRUE:-yes}"
+  local -r ARG_VALUE_FALSE="${ARG_VALUE_FALSE:-no}"
+
+  # User may want to parse arguments for various scripts or even separate
+  # functions inside each script which may all be a part of a larger program.
+  # Therefore, we need to store arguments data for each call separately.
+  # This will be done via associative arrays where each key is the NAME of the
+  # caller and each value is a pseudo-array string. Users of CliArgs() won't
+  # have to worry about these details, this is all internal.
+  #
+  # NAME can be provided by the user himself via the CALLER variable in front
+  # of the actual invocation of `CliArgs()` or it'll be assigned automatically,
+  # by fetching caller-script filename. If, for some, reason automatic assignment
+  # fails, NAME will given the value "default".
+  local NAME="$CALLER"
+  if [[ -z "$NAME" ]]; then
+    caller | grep -ovE '^[0-9]+' | grep -ovE '.[a-zA-Z]$' | \
+      read _ NAME # reads caller script name into the $NAME variable
+    NAME="${NAME:-default}"
   fi
 
-  local INITIAL_ARGS="${@}"
+  # This is a unique global associative array which stores all the information
+  # about both arguments definitions (or rules: which arguments are required,
+  # which are allowed, but optional etc.) with each item of that array being
+  # a pseudo-array - a string separated by a special $ARG_ARRAY_SEPARATOR
+  # These pseudo-arrays will be used by other nested functions of CliArgs()
+  # to return whatever the user requests.
+  declare -gA "ARG_DATA_FOR_${NAME}"
 
-  local IGNORE_ARG_ERRORS="$(echo "$INITIAL_ARGS" | grep '\-\-ignore-arg-errors')"
-  if [[ -n $IGNORE_ARG_ERRORS ]]; then
-    INITIAL_ARGS="$(echo "$IGNORE_ARG_ERRORS" | sed -E 's/--ignore-arg-errors//')"
-  fi
-
-
-  local ARG_VALUE_TRUE="${ARG_VALUE_TRUE:-yes}"
-  local ARG_VALUE_FALSE="${ARG_VALUE_FALSE:-no}"
-
-  strip_arg_name_from_dashes() {
+  strip_from_dashes() {
     echo "$1" | sed 's/--?//'
   }
 
-  extract_allowed_args() {
-    local arg_type="$1"
-    shift
-    echo "$@"                             | \
-      grep -oE "\-\-$arg_type-args=[^ ]+" | \
-      sed -E 's/.+=//'                    | \
-      sed 's/,/ /g'
+  extract_synonyms() {
+    echo $(echo "${@}"              | \
+      grep -oE '[a-zA-Z]:[a-zA-Z]+' | \
+      sed -E 's/:[^ ]+/ /g')
   }
 
-  extract_allowed_args_synonyms() {
-    local result
-    for a in "${@}"; do
-      if [[ "$a" == *":"* ]]; then result+="$( echo $a | sed -E 's/:[^\s]+/ /g')"; fi
-    done
-    echo "$result" | xargs # removes the trailing space
+  get_long_name_for_synonym() {
+    local arg_name=$1
+    shift
+    echo "$@" | grep -o "$arg_name:[^ ]*" | grep -o ':[^: ]*' | cut -c2-
   }
 
   get_value_for() {
-    local result="${VALUE_REQUIRED_ARGS[$1]}"
-    echo "$result"
+    return 0
   }
 
-  # ATTENTION: here the program will exit if a non-existent nested function
-  # was called (this line is mainly for "bashjazz/utest" (unit-testing)
-  # compliance.
-  if [[ -n $CALL_NESTED ]]; then
-    $CALL_NESTED $@
-    exit $?
-  fi
+  # Prints data held in keys from ARG_DATA_FOR_$NAME associative array.
+  # Used by define() and parse() to print that info out. Why print when
+  # data is already stored in a global variable? At this point, it's for
+  # unit-testing, because $BASHJAZZ_PATH/utest uses subroutines, which means
+  # global variables stay within their confines and cannot be accessed
+  # in unit tests. Printing them out solves this issue.
+  print_args_data() {
+    local var_names="$@"
+    # TODO: print argument data from the global associative array ARG_DATA_FOR_$NAME
+  }
 
-  # This is not the final result of extracting names, we need them as strings
-  # to easily pass to another function, which extracts synonyms and finalizes
-  # the process VALUE_REQUIRED_ARGS and VALUELESS_ARGS
-  VALUE_REQUIRED_ARGS=( $(extract_allowed_args 'value-required' ${INITIAL_ARGS[@]}) )
-  if [[ -n "${VALUE_REQUIRED_ARGS[@]}" ]]; then shift; fi
-  VALUELESS_ARGS=( $(extract_allowed_args 'valueless' ${INITIAL_ARGS[@]}) )
-  if [[ -n "${VALUELESS_ARGS[@]}" ]]; then shift; fi
+  define() {
 
-  # The function called below only returns something if
-  # the respective variable isn't empty (meaning, the --value-required-args
-  # and/or --valueless-args arguments were provided and need to be removed
-  # from $INITIAL_ARGS.
-  local arg_synonyms_str="${VALUE_REQUIRED_ARGS[@]} ${VALUELESS_ARGS[@]}"
-  ARG_SYNONYMS=( $(echo "$arg_synonyms_str" | \
-  grep -oE '[a-zA-Z]:[a-zA-Z]+' | sed -E 's/:[^ ]+/ /g') )
+    local -A args
+    local -a synonyms
 
-  VALUE_REQUIRED_ARGS=(
-    $(echo "${VALUE_REQUIRED_ARGS[@]}" | sed -E 's/(^| )[a-zA-Z]:/ /g')
-  )
-  VALUELESS_ARGS=(
-    $(echo "${VALUELESS_ARGS[@]}" | sed -E 's/(^| )[a-zA-Z]:/ /g')
-  )
+    local args[value]="$VALUE_ARGS"
+    local args[no_value]="$NO_VALUE_ARGS"
+    local args[default_value]="$DEFAULT_VALUE_ARGS"
+    local args[required]="$REQUIRED_ARGS"
 
+    for k in "${!args[@]}"; do
+      synonyms=( "${synonyms[@]}" "$(extract_synonyms ${args[$k]})" )
+
+      # The next line of code removes the ":" character, which means we only
+      # keeps the two-dash argument names in these variables or,
+      # if a cli-arg only has a one-dash version, then that's the one that will
+      # be kept. This is fine, because get_value_for() will take either a
+      # synonym or an actual name and return a value we'll extract later on.
+
+
+      args[$k]="$(echo "${args[$k]}" | sed -E 's/(^| )[a-zA-Z]:/ /g')"
+      # TODO: assign this value above to the global associate
+      # array ARG_DATA_FOR_$NAME. Possible solution:
+      #
+      #   IFS= read -r -d '' "ARG_DATA_FOR_$NAME[$k]" <<< "${args[$k]}"
+
+      # TODO MAYBE: call print_args_data() with proper argument names
+
+    done
+
+  }
+
+  parse() {
+
+    local name="${1:-$NAME}"
+
+    while $# -gt 0; do
+      arg="$1"
+      shift
+
+      # Process $arg in several steps:
+      # 1. If argument starts with a dash or two dashes - it's non-positional:
+      #
+      #      1) Determine if it's allowed
+      #      2) Determine if it requires value and assign it.
+      #      3) Determine if value is optional, assign default or provided.
+      #      4) Determine if value is not allowed
+      #         (which means an argument may be followed by a positional argument).
+      #
+      # 2. If arguments starts with an alphanumeric character:
+      #
+      #    1) Check if previous argument was a one-dash argument that was
+      #       expecting a value. If yes, then this argument IS NOT a positional
+      #       argument, but a value to the non-positional one-dash argument.
+      # 
+      #    2) Otherwise treat this argument as a positional argument.
+
+      # TODO MAYBE: call print_args_data() with proper argument names
+    done
+
+  }
+
+
+  ########### TODO: part of that code should end up in the parse() function
   local one_dash_arg_name
 
   for arg in "${@}"; do
@@ -184,11 +212,11 @@ CliArgs() {
     fi
 
   done
+  #########################################################################
 
-  echo "VALUELESS_ARGS=${VALUELESS_ARGS[@]}"
-  echo "VALUE_REQUIRED_ARGS=${VALUE_REQUIRED_ARGS[@]}"
-  echo "NAMED_ARGS=${NAMED_ARGS[@]}"
-  echo "POS_ARGS=${POS_ARGS[@]}"
-  echo "ARG_SYNONYMS=${ARG_SYNONYMS[@]}"
+  # ATTENTION: here the program will exit if a non-existent nested function
+  # was called.
+  $CALL_NESTED $@
+  exit $?
 
 }
