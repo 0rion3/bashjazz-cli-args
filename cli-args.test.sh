@@ -11,7 +11,6 @@ CliArgs define \
   --value-args='x,i:input-fn,o:output-fn,log-fn,y' \
   --required-args='a' \
   --required-values='input-fn' \
-  --ignore-errors=yes
 
 utest begin CliArgs \
 'Parses and separates cli-args into positional & non-positional'
@@ -84,7 +83,6 @@ utest begin CliArgs \
 
   utest begin define \
   'Defines the rules according to which arguments are parsed and accepted/rejected'
-    utest assert "$(utest get_namespace_var ARG_DEF_ignore_errors)" == 'yes'
     utest assert "$(utest get_namespace_var ARG_DEF_all_args)" == \
       'a l:list u:list_updates version b x i:input_fn o:output_fn log_fn y'
     utest assert "$(utest get_namespace_var ARG_DEF_no_value_args)" == \
@@ -98,11 +96,30 @@ utest begin CliArgs \
 
   utest begin parse
 
-    utest begin with_correct_args
-      CliArgs parse \
-        -a -l --list-updates --version \
-        -i input.txt --output-fn=output.txt pos_value_1 pos_value_2
+    CliArgs parse \
+      -a -l --list-updates --version \
+      -i input.txt --output-fn=output.txt pos_value_1 pos_value_2
 
+    utest begin get_value
+      utest begin two_dash_argument \
+      'Gets value for --two-dash-arguments'
+        utest cmd CliArgs get_value list_updates
+        utest assert "$UTOUT" == 'yes'
+        utest cmd CliArgs get_value output_fn
+        utest assert "$UTOUT" == 'output.txt'
+      utest end two_dash_argument
+
+
+      utest begin single_dash_argument \
+      'Gets value for -s single dash arguments'
+        utest cmd CliArgs get_value list
+        utest assert "$UTOUT" == 'yes'
+        utest cmd CliArgs get_value input_fn
+        utest assert "$UTOUT" == 'input.txt'
+      utest end single_dash_argument
+    utest end get_value
+
+    utest begin with_correct_args
       utest assert "$(utest get_namespace_var ARG_VALUES a)"    == 'yes'
       utest assert "$(utest get_namespace_var ARG_VALUES list)" == 'yes'
       utest assert "$(utest get_namespace_var ARG_VALUES list_updates)" == 'yes'
@@ -121,30 +138,12 @@ utest begin CliArgs \
     utest begin without_required_arg
     utest end without_required_arg pending
 
+    utest begin ignoring_errors \
+    "doesn't throw error when --ignore-errors flag is present"
+      utest add_cmd CliArgs parse -x --input-fn=filename.txt
+      utest assert "$UTERR" is blank
+    utest end ignoring_uknown_args pending
+
   utest end parse
-
-  ######################### PENDING ##############################
-  utest begin get_value
-    utest begin two_dash_argument \
-    'Gets value from --two-dash-arg, sets to "true" if no value provided after ='
-      utest cmd CliArgs get_value_for \
-        two-dash-arg '--two-dash-arg="value 1" --arg2=1'
-      utest assert "$UTOUT" == 'value 1'
-    utest end two_dash_argument pending
-
-
-    utest begin single_dash_argument \
-      'Gets value (or sets it to "true") from a single-dash argument, such as -a'
-      utest cmd CliArgs get_value_for t '-t "value 1" -s something_else'
-      utest assert "$UTOUT" == 'value 1'
-    utest end single_dash_argument pending
-  utest end get_value
-
-  utest begin ignoring_unknown_args \
-  "doesn't throw error when --ignore-unknown-args flag is present"
-    utest add_cmd CliArgs parse -x --input-fn=filename.txt
-    utest assert "$UTERR" is blank
-  utest end ignoring_uknown_args pending
-
 
 utest end CliArgs

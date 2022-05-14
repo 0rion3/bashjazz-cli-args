@@ -127,8 +127,12 @@ CliArgs() {
   }
 
   get_value() {
-    # TODO
-    return 0
+    local arg_name="$(get_name "$1")"
+    local result=$?
+    if [[ $result == 0 ]]; then
+      echo "$(get_namespace_var 'ARG_VALUES' $arg_name)"
+    fi
+    return $result
   }
 
   extract_arg_name() {
