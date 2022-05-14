@@ -11,70 +11,40 @@ CliArgs define \
   --value-args='x,i:input-fn,o:output-fn,log-fn,y' \
   --required-args='a' \
   --required-values='input-fn' \
-  --args='x,i:input-fn,o:output-fn,log-fn,y' > /dev/null
+  --ignore-errors=yes
 
 utest begin CliArgs \
 'Parses and separates cli-args into positional & non-positional'
 
-  utest begin declare_namespace_var
+  utest begin namespace_vars
+
     assoc="greeting${CLIARGS_USEP}hello${CLIARGS_RSEP}"
     assoc+="address${CLIARGS_USEP}world${CLIARGS_RSEP}"
     CliArgs declare_namespace_var str_var 'hello world'
     CliArgs declare_namespace_var -a arr_var 'hello world'
     CliArgs declare_namespace_var -A assoc_var "$assoc"
-    unset assoc
 
-    utest assert "$str_var_FOR_default"  == 'hello world'
-    utest assert "$(utest get_namespace_arr_item 0 arr_var)" == 'hello'
-    utest assert "$(utest get_namespace_arr_item 1 arr_var)" == 'world'
-    utest assert "$(utest get_namespace_arr_item greeting assoc_var)" == 'hello'
-    utest assert "$(utest get_namespace_arr_item address  assoc_var)" == 'world'
-  utest end declare_namespace_var
+    utest begin declare_namespace_var
+      utest assert "$(utest get_namespace_var str_var)"   == 'hello world'
+      utest assert "$(utest get_namespace_var arr_var 0)" == 'hello'
+      utest assert "$(utest get_namespace_var arr_var 1)" == 'world'
+      utest assert "$(utest get_namespace_var assoc_var greeting)" == 'hello'
+      utest assert "$(utest get_namespace_var assoc_var address)" == 'world'
+    utest end declare_namespace_var
 
-  utest begin append_to_declared_var_for_name
-    utest cmd CliArgs declare_var_for_name str_var 'hello world'
-    utest cmd CliArgs declare_var_for_name arr_var 'hello world'
-    utest cmd CliArgs declare_namespace_var -A assoc_var \
-      "greeting${CLI_ARGS_USEP} hello${CLIARGS_RSEP} address${CLI_ARGS_USEP} world"
-    utest cmd CliArgs append_to_namespace_var
-  utest end append_to_declared_var_for_name pending
+    utest begin append_to_namespace_var
+      CliArgs append_to_namespace_var str_var 'from utest' # space is intentional
+      CliArgs append_to_namespace_var arr_var 'from utest'
+      CliArgs append_to_namespace_var assoc_var "from${CLIARGS_USEP}utest"
+      utest assert "$(utest get_namespace_var str_var)"   == 'hello world from utest'
+      utest assert "$(utest get_namespace_var arr_var 2)" == 'from'
+      utest assert "$(utest get_namespace_var arr_var 3)" == 'utest'
+      utest assert "$(utest get_namespace_var assoc_var from)" == 'utest'
+    utest end append_to_namespace_var
 
-  #utest begin define \
-  #'Defines the rules according to which arguments are parsed and accepted/rejected'
-    #utest assert "$ARG_DEF_ignore_errors_FOR_default" == 'yes'
-    #utest assert "$ARG_DEF_all_args_FOR_default" == \
-      #'a l:list u:list_updates version b x i:input_fn o:output_fn log_fn y'
-    #utest assert "$ARG_DEF_no_value_args_FOR_default" == \
-      #'a list list_updates version b'
-    #utest assert "$ARG_DEF_value_args_FOR_default" == \
-      #'x input_fn output_fn log_fn y'
-    #utest assert "$ARG_DEF_required_args_FOR_default" == 'a'
-    #utest assert "$ARG_DEF_synonyms_FOR_default" == \
-      #'a l u version b x i o log_fn y'
-  #utest end define pending
+    #unset assoc
 
-  #utest begin parse
-
-    #utest begin with_correct_args
-      #utest cmd CliArgs parse -a -l --list-updates --version \
-        #-i file.txt --output-fn=output.txt
-      #utest assert "${ARGS_VALUES_FOR_default[a]}"            == 'yes'
-      #utest assert "${ARGS_VALUES_FOR_default[list]}"         == 'yes'
-      #utest assert "${ARGS_VALUES_FOR_default[list_updates]}" == 'yes'
-      #utest assert "${ARGS_VALUES_FOR_default[input.txt]}"    == 'input.txt'
-      #utest assert "${ARGS_VALUES_FOR_default[output.txt]}"   == 'output.txt'
-    #utest end with_wrong_args
-
-    #utest begin with_uknown_args
-    #utest end with_uknown_args pending
-
-    #utest begin with_wrong_arg_values
-    #utest end with_wrong_arg_values pending
-
-    #utest begin without_required_arg
-    #utest end without_required_arg pending
-
-  #utest end parse
+  utest end namespace_vars
 
   utest begin get_name \
   'Given the synonym or original name in $1 to get_name(), echo original arg name'
@@ -110,7 +80,48 @@ utest begin CliArgs \
 
     utest end from_synonym
 
-  utest end get_name pending
+  utest end get_name
+
+  utest begin define \
+  'Defines the rules according to which arguments are parsed and accepted/rejected'
+    utest assert "$(utest get_namespace_var ARG_DEF_ignore_errors)" == 'yes'
+    utest assert "$(utest get_namespace_var ARG_DEF_all_args)" == \
+      'a l:list u:list_updates version b x i:input_fn o:output_fn log_fn y'
+    utest assert "$(utest get_namespace_var ARG_DEF_no_value_args)" == \
+      'a list list_updates version b'
+    utest assert "$(utest get_namespace_var ARG_DEF_value_args)" == \
+      'x input_fn output_fn log_fn y'
+    utest assert "$(utest get_namespace_var ARG_DEF_required_args)" == 'a'
+    utest assert "$(utest get_namespace_var ARG_DEF_synonyms)" == \
+      'a l u version b x i o log_fn y'
+  utest end define
+
+  utest begin parse
+
+    utest begin with_correct_args
+      CliArgs parse \
+        -a -l --list-updates --version \
+        -i input.txt --output-fn=output.txt pos_value_1 pos_value_2
+
+      utest assert "$(utest get_namespace_var ARG_VALUES a)"    == 'yes'
+      utest assert "$(utest get_namespace_var ARG_VALUES list)" == 'yes'
+      utest assert "$(utest get_namespace_var ARG_VALUES list_updates)" == 'yes'
+      utest assert "$(utest get_namespace_var ARG_VALUES input_fn)" == 'input.txt'
+      utest assert "$(utest get_namespace_var ARG_VALUES output_fn)" == 'output.txt'
+      utest assert "$(utest get_namespace_var POS_ARG_VALUES 0)" == 'pos_value_1'
+      utest assert "$(utest get_namespace_var POS_ARG_VALUES 1)" == 'pos_value_2'
+    utest end with_wrong_args
+
+    utest begin with_uknown_args
+    utest end with_uknown_args pending
+
+    utest begin with_wrong_arg_values
+    utest end with_wrong_arg_values pending
+
+    utest begin without_required_arg
+    utest end without_required_arg pending
+
+  utest end parse
 
   ######################### PENDING ##############################
   utest begin get_value

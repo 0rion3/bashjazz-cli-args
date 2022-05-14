@@ -10,6 +10,87 @@ NULL_SYM='␀'
 
 CliArgs() {
 
+  ########## NAMESPACE VARIABLES, EMULATING ARRAYS & ##########
+  ##########          ASSOCIATIVE ARRAYS             ##########
+  #
+  # This code should probably be extracted into a separate
+  # library. It's got little to do with CliArgs itself, but
+  # but it simplifies working with dynamic variable names,
+  # when variables are Arrays or Associative arrays. And it
+  # generally simplifies things in terms of working with these
+  # two data structures, being a de-facto alternative
+  # implementation for the them.
+  #
+  # It works best for Arrays and Associative Arrays, but isn't
+  # good if values contain extra spaces, which it ignores.
+  # If you need to account for extra spaces, use something else.
+
+  declare_namespace_var() {
+    if [[ "$1" == "-"* ]]; then
+      local var_flag="$1 "
+      shift
+    fi
+    local var_name="$1_FOR_$CLIARGS_NS"
+    shift
+    printf -v "$var_name" '%s' "$var_flag$(echo "${@}" | xargs)"
+  }
+
+  append_to_namespace_var() {
+    var_name="$1_FOR_$CLIARGS_NS"
+    shift
+
+    local var_addition="$(echo "$@" | xargs)"
+    local var_type="$(echo "${!var_name}" | grep -oE '^-[a-zA-Z]')"
+
+    local var_value
+    if [[ $var_type == '-A' ]]; then
+      var_value="${!var_name}$var_addition${CLIARGS_RSEP}"
+    elif [[ $var_type == '-a' ]]; then
+      var_value="${!var_name} $var_addition"
+    else
+      var_value="${!var_name} ${@}"
+    fi
+    printf -v "$var_name" '%s' "$var_value"
+  }
+
+  # $1 = arr_name (without the namespace, example: ARG_DEF_all_args)
+  # $2 = arr_index (integer)
+  get_namespace_var() {
+    var_name="${1}_FOR_${CLIARGS_NS}"
+
+    if [[ "${!var_name}" == "-A"* ]]; then
+      local i="$2"
+      echo "${!var_name}" | \
+        grep -oE "${i}${CLIARGS_USEP}[^$CLIARGS_RSEP]+" | \
+        sed "s/${i}${CLIARGS_USEP}//" | xargs
+    elif [[ "${!var_name}" == "-a"* ]]; then 
+      local arr=( $(echo "${!var_name}" ) )
+      if [[ -n $2 ]]; then
+        local i=$(($2+1)) # Because 0 is -a
+        echo "${arr[$i]}" | xargs
+      else
+        echo "${arr[@]}" | sed 's/^-[a-zA-Z]//' | xargs
+      fi
+    else
+      echo "${!var_name}"
+    fi
+
+  }
+
+  namespace_var_contains() {
+    local var_name="${1}_FOR_${CLIARGS_NS}"
+    local var_value="${!var_name}"
+    if [[ "$var_value" =~ (^| )$2( |$) ]]; then
+      echo "$2" && return 0
+    else
+      return 1
+    fi
+  }
+
+  ##########               END OF                    ##########
+  ########## NAMESPACE VARIABLES, EMULATING ARRAYS & ##########
+  ##########          ASSOCIATIVE ARRAYS             ##########
+
   extract_synonyms() {
     echo $(echo "${@}" | \
       sed -E 's/:[^ ]+/ /g')
@@ -25,14 +106,12 @@ CliArgs() {
     # it with a dash "-" because all argument names in CliArgs() are stored
     # with underscores replacing dashes in their names, such that, for example,
     # the name "input-fn" becomes "input_fn".
-    local arg_name=$(echo "$1" | sed 's/^--//' | sed 's/-/_/g')
+    local arg_name=$(echo "$1" | sed 's/^--//' | sed 's/^-//g' | sed 's/-/_/g')
 
-    local arg_names_var="ARG_DEF_all_args_FOR_$CLIARGS_NS"
-    local arg_synonyms_var="ARG_DEF_synonyms_FOR_$CLIARGS_NS"
-    local names=(
-      $(echo "${!arg_names_var}" | sed -E 's/[a-zA-Z0-9_]+[:]//g')
-    )
-    local synonyms=(  $(echo "${!arg_synonyms_var}") )
+    local names=($(
+      echo "$(get_namespace_var ARG_DEF_all_args)" | sed -E 's/[a-zA-Z0-9_]+[:]//g'
+    ))
+    local synonyms=( $(get_namespace_var ARG_DEF_synonyms) )
 
     local result="$(echo "${names[@]}"   | \
       grep -oE "(^|\s|:)$arg_name(\s|$)" | \
@@ -52,56 +131,8 @@ CliArgs() {
     return 0
   }
 
-  declare_namespace_var() {
-    if [[ "$1" == "-"* ]]; then
-      local var_flag="$1 "
-      shift
-    fi
-    local var_name="$1_FOR_$CLIARGS_NS"
-    shift
-    declare -g "$var_name"="${var_flag}$(echo "$@" | xargs)"
-  }
-
-  append_to_namespace_var() {
-    var_name="$1_FOR_$CLIARGS_NS"
-    shift
-
-    local var_addition="$(echo "$@" | xargs)"
-    local var_type="$(echo "${!var_addition}" | grep -oE '^-[a-zA-Z]')"
-
-    local var_value
-    if [[ $var_type == '-A' ]]; then
-      var_value="${!var_name}$var_addition${CLIARGS_RSEP}"
-    elif [[ $var_type == '-a' ]]; then
-      var_value="${!var_name} $var_addition"
-    else
-      # The difference from the above is that when we append to a string
-      # we don't separate with a space.
-      var_value="${!var_name}$var_addition"
-    fi
-    printf -v "$var_name" '%s' "$var_value"
-  }
-
-  # $1 = arr_name (without the namespace, example: ARG_DEF_all_args)
-  # $2 = arr_index (integer)
-  get_namespace_arr_item() {
-    var_name="${2}_FOR_${CLIARGS_NS}"
-
-    if [[ "${!var_name}" == "-A"* ]]; then
-      local i="$1"
-      echo "${!var_name}" | \
-        grep -oE "${i}${CLIARGS_USEP}[^$CLIARGS_RSEP]+" | \
-        sed "s/${i}${CLIARGS_USEP}//"
-    else
-      local i=$(($1+1)) # Because 0 is -a
-      local arr=( $(echo "${!var_name}" ) )
-      echo "${arr[$i]}"
-    fi
-
-  }
-
   extract_arg_name() {
-    echo "$1" | grep -o '^\-\-[a-zA-Z0-0\-]+=' | \
+    echo "$1" | grep -oE '^\-\-[a-zA-Z0-0\-]+=?' | \
       sed 's/^--//' | sed 's/-/_/g' | sed 's/=$//'
   }
 
@@ -129,11 +160,10 @@ CliArgs() {
 
       local arg_name="$(extract_arg_name "$arg")"
       Array_contains $arg_name "${allowed[@]}" > /dev/null || continue
-
       local value="$(extract_arg_value "$arg")"
 
       if [[ "$arg_name" =~ ^((no_)?value|required)_(args|values)$ ]]; then
-        if [[ "$arg_name" != "required_args" ]]; then
+        if [[ ! "$arg_name" =~ ^required_(args|values)$ ]]; then
           all_args+="$value "
         fi
         value="$(echo "$value" | sed -E 's/(^| )[a-zA-Z0-9]+:/ /g')"
@@ -141,23 +171,26 @@ CliArgs() {
       else
         printf -v "$arg_name" '%s' "$value"
       fi
+
     done
 
     local synonyms="$(extract_synonyms "$all_args")"
-    declare_namespace_var 'ARG_DEF_all_args'        "$all_args"
-    declare_namespace_var 'ARG_DEF_no_value_args'   "$no_value_args"
-    declare_namespace_var 'ARG_DEF_value_args'      "$value_args"
-    declare_namespace_var 'ARG_DEF_required_args'   "$required_args"
-    declare_namespace_var 'ARG_DEF_required_values' "$required_values"
-    declare_namespace_var 'ARG_DEF_synonyms'        "$synonyms"
-    declare_namespace_var 'ARG_DEF_ignore_errors'   "$ignore_errors"
+    declare_namespace_var -a 'ARG_DEF_all_args'        "$all_args"
+    declare_namespace_var -a 'ARG_DEF_no_value_args'   "$no_value_args"
+    declare_namespace_var -a 'ARG_DEF_value_args'      "$value_args"
+    declare_namespace_var -a 'ARG_DEF_required_args'   "$required_args"
+    declare_namespace_var -a 'ARG_DEF_required_values' "$required_values"
+    declare_namespace_var -a 'ARG_DEF_synonyms'        "$synonyms"
+    declare_namespace_var -a 'ARG_DEF_ignore_errors'   "$ignore_errors"
   }
 
   parse() {
 
-    while $# -gt 0; do
-      arg="$1"
-      shift
+    declare_namespace_var -A ARG_VALUES
+    declare_namespace_var -a POS_ARG_VALUES
+    local prev_arg_name
+    >&2 echo ""
+    for arg in "${@}"; do
 
       # Determine argument type: a 1-dash argument, a 2-dash argument or a
       # positional argument.
@@ -167,18 +200,46 @@ CliArgs() {
       elif [[ "$arg" == "-"* ]]; then
         arg_type=1
       else
-        [[ -n $prev_arg_name ]] && arg_type=-1 || arg_type=0
+        arg_type=0
       fi
 
+      local arg_name
+      local arg_value
+
       if [ $arg_type -gt 0 ]; then
-        local arg_name="$(extract_arg_name "$arg")"
-        local arg_value="$(extract_arg_value "$arg")"
-      else
-        if [ $arg_type = -1 ]; then
-          append_to_namespace_var 'arg_values' "$prev_arg_name" "$arg_name"
-        else
-          append_to_namespace_var 'pos_arg_values' "$arg"
+
+        if [ $arg_type = 1 ]; then
+          arg_name="$(get_name $arg)"
+          if [[ -n $arg_name ]]; then
+            if [[ -n "$(namespace_var_contains ARG_DEF_value_args $arg_name)" ]]; then
+              prev_arg_name="$(get_name $arg)"
+              continue
+            else
+              arg_value="$ARG_VALUE_TRUE"
+            fi
+          fi
+        elif [ $arg_type = 2 ]; then
+          arg_name="$(get_name $(extract_arg_name "$arg"))"
+          if [[ -n "$(namespace_var_contains ARG_DEF_value_args $arg_name)" ]]; then
+            arg_value="$(extract_arg_value "$arg")"
+          else
+            arg_value="${arg_value:-$ARG_VALUE_TRUE}"
+          fi
         fi
+
+      else
+        if [[ -n $prev_arg_name ]]; then
+          local arg_name="$prev_arg_name"
+          local arg_value="$arg"
+        fi
+      fi
+
+      if [[ -n $prev_arg_name ]] || [ $arg_type -gt 0 ]; then
+        append_to_namespace_var \
+          'ARG_VALUES' "$arg_name${CLIARGS_USEP}$arg_value${CLIARGS_RSEP}"
+        unset prev_arg_name
+      else
+        append_to_namespace_var 'POS_ARG_VALUES' "$arg"
       fi
 
     done
