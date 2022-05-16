@@ -3,9 +3,8 @@ source $BASHJAZZ_PATH/utils/array.sh
 source $BASHJAZZ_PATH/utils/formatting.sh
 source $BASHJAZZ_PATH/utils/quoted_string.sh
 
-declare -g CLIARGS_RSEP='' # U+001E, record separator
-declare -g CLIARGS_USEP='' # U+001F, unit separator
-
+declare -g RSEP="" # record separator - \x1E
+declare -g USEP="" # unit separator   - \x1F
 NULL_SYM='␀'
 
 CliArgs() {
@@ -44,7 +43,7 @@ CliArgs() {
 
     local var_value
     if [[ $var_type == '-A' ]]; then
-      var_value="${!var_name}$var_addition${CLIARGS_RSEP}"
+      var_value="${!var_name}$var_addition"
     elif [[ $var_type == '-a' ]]; then
       var_value="${!var_name} $var_addition"
     else
@@ -60,9 +59,13 @@ CliArgs() {
 
     if [[ "${!var_name}" == "-A"* ]]; then
       local i="$2"
-      echo "${!var_name}" | \
-        grep -oE "${i}${CLIARGS_USEP}[^$CLIARGS_RSEP]+" | \
-        sed "s/${i}${CLIARGS_USEP}//" | xargs
+      if [[ -n $2 ]]; then
+        echo "${!var_name}" | \
+          grep -oE "${i}${USEP}[^${RSEP}]+" | \
+          sed "s/${i}${USEP}//" | xargs
+      else
+        echo "${!var_name}" | xargs
+      fi
     elif [[ "${!var_name}" == "-a"* ]]; then 
       local arr=( $(echo "${!var_name}" ) )
       if [[ -n $2 ]]; then
@@ -83,7 +86,7 @@ CliArgs() {
     if [[ "$var_value" =~ (^| )$2( |$) ]]; then
       echo "$2" && return 0
     else
-      return 1
+      echo "" && return 1
     fi
   }
 
@@ -118,8 +121,10 @@ CliArgs() {
       sed 's/^://')"
 
     if [[ -z "$result" ]]; then
-      local item_index="$(Array_get_index_for $arg_name ${synonyms[@]})"
-      result="${names[$item_index]}"
+      if [[ -n "$(Array_contains $arg_name ${synonyms[@]})" ]]; then
+        local item_index="$(Array_get_index_for $arg_name ${synonyms[@]})"
+        result="${names[$item_index]}"
+      fi
     fi
 
     echo "$result" | xargs # again, xargs here is to remove trailing whitespace
@@ -135,8 +140,33 @@ CliArgs() {
     return $result
   }
 
+  arg_present?() {
+    local all_provided_args="$(get_namespace_var 'ARG_VALUES')"
+    local matched_arg="$(echo "$all_provided_args" | sed 's/^-A //' | \
+      grep -oE "(^|$RSEP)$1$USEP")"
+    if [[ -n "$matched_arg" ]]; then
+      echo -n "yes" && return 0
+    else
+      echo -n "" && return 1
+    fi
+  }
+
+  arg_known?() {
+    local all_known_args="$( \
+      get_namespace_var ARG_DEF_all_args | sed 's/:/ /g' | sed 's/-/_/g')"
+    if [[ -n "$(Array_contains $1 $all_known_args)" ]]; then
+      echo "yes" && return 0
+    else
+      echo "" && return 1
+    fi
+  }
+
+  arg_has_value?() {
+    test -n "$(get_value $1)" && return 0 || return 1
+  }
+
   extract_arg_name() {
-    echo "$1" | grep -oE '^\-\-[a-zA-Z0-0\-]+=?' | \
+    echo "$1" | grep -oE '^\-\-[a-zA-Z0-9\-]+=?' | \
       sed 's/^--//' | sed 's/-/_/g' | sed 's/=$//'
   }
 
@@ -167,7 +197,7 @@ CliArgs() {
       local value="$(extract_arg_value "$arg")"
 
       if [[ "$arg_name" =~ ^((no_)?value|required)_(args|values)$ ]]; then
-        if [[ ! "$arg_name" =~ ^required_(args|values)$ ]]; then
+        if [[ "$arg_name" =~ ^(no_)?value_args$ ]]; then
           all_args+="$value "
         fi
         value="$(echo "$value" | sed -E 's/(^| )[a-zA-Z0-9]+:/ /g')"
@@ -193,7 +223,6 @@ CliArgs() {
     declare_namespace_var -A ARG_VALUES
     declare_namespace_var -a POS_ARG_VALUES
     local prev_arg_name
-    >&2 echo ""
     for arg in "${@}"; do
 
       # Determine argument type: a 1-dash argument, a 2-dash argument or a
@@ -229,6 +258,8 @@ CliArgs() {
           else
             arg_value="${arg_value:-$ARG_VALUE_TRUE}"
           fi
+          arg_name="${arg_name:-$(echo "$arg" | \
+            sed 's/^--//' | sed 's/-/_/g' | sed 's/=$//')}"
         fi
 
       else
@@ -238,15 +269,55 @@ CliArgs() {
         fi
       fi
 
+      local arg_name="${arg_name:-$prev_arg_name}"
+
+      # Checking whether a given argument or its value is valid.
+      # Being valid right now basically means whether the argument
+      # is allowed and whether it requires a value. There's one more check
+      # outside of this `for` loop, which checks if required arguments
+      # are present at all - but that's about it for now. Further rules for
+      # argument values shall be implemented by CliArg users in their
+      # respective Bash scripts.
+      #
+      # All errors are ignored if `CliArgs define` was called
+      # with `--ignore-errors`.
+      if [[ -n $arg_name ]] && \
+         [[ -z "$(namespace_var_contains ARG_DEF_ignore_errors)" ]]; then
+
+        # 1. Check if it's on the list of accepted arguments
+        if [[ -z "$(arg_known? $arg_name)" ]]; then
+          print_error $arg_name "_" "unknown argument" && return 1
+        fi
+
+        # 2. Check if argument requires value and it is provided
+        if [[ "$(namespace_var_contains ARG_DEF_required_values $arg_name)" ]] &&
+           [[ -z "$arg_value" ]]; then
+           print_error $arg_name $NULL_SYM \
+             "missing required value for argument" && return 1
+        fi
+
+      fi
+
       if [[ -n $prev_arg_name ]] || [ $arg_type -gt 0 ]; then
         append_to_namespace_var \
-          'ARG_VALUES' "$arg_name${CLIARGS_USEP}$arg_value${CLIARGS_RSEP}"
+          'ARG_VALUES' "$arg_name${USEP}$arg_value${RSEP}"
         unset prev_arg_name
       else
         append_to_namespace_var 'POS_ARG_VALUES' "$arg"
       fi
+      unset arg_value
 
     done
+
+    if [[ -z "$(namespace_var_contains ARG_DEF_ignore_errors)" ]]; then
+      local required_args=( $(get_namespace_var ARG_DEF_required_args) )
+      for r in "${required_args[@]}"; do
+        if [[ -z "$(arg_present? "$r")" ]]; then
+          print_error "$r" "$NULL_SYM" "required argument is missing"
+          return 1
+        fi
+      done
+    fi
 
   }
 
@@ -254,8 +325,18 @@ CliArgs() {
     local arg_name="$1"
     local arg_value="$2"
     local title="$3"
-    echo -e "$(ind 4; color red)ERROR: $title"
-    echo -e "$(ind 8; color bold) $arg_name == $arg_value$(color off)"
+    local SEP="\n$(ind 8)"
+    if [[ $arg_value == $NULL_SYM ]]; then
+      arg_value="is blank"
+    elif [[ $arg_value == "_" ]]; then
+      arg_value=""
+      SEP=": "
+    else
+      arg_value="== $arg_value"
+    fi
+    >&2 echo -en  "\n$(ind 4; color red)$title"
+    >&2 echo -en "${SEP}$(color bold)$arg_name$(color off; color red) $arg_value"
+    >&2 echo -e  "$(color off)"
   }
 
   # The First ARGUMENT to this function is the name of the nested function to
