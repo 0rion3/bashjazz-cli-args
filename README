@@ -1,0 +1,187 @@
+CLI-ARGS
+--------
+Bash parser for command line arguments.
+
+
+INTRODUCTION
+------------
+Regular approach to parsing Bash script cli-arguments only works well
+for short, one-letter arguments and does not provide important functions,
+that can help script authors define one-letter synonyms for long --two-dash
+arguments, such as: printing errors in case arguments are not provided with
+along with the required values, or when required arguments are necessary in
+general, or when you need a short one-dash argument be a synonym for the
+long --two-dash argument.
+
+
+DEPENDENCIES
+------------
+Internal:
+  BashJazz/utils library installed and `$BASHJAZZ_PATH` env variable set.
+
+External:
+  bash >= v4.2, awk, sed, grep.
+
+
+USAGE
+-----
+To use this library inside your script, you first need to source it with:
+
+    ...
+    source $BASHJAZZ_PATH/cli-args/cli-args.sh
+    ...
+
+Then, there are the following three steps:
+
+  1) Define which arguments are to be accepted and if they require values passed.
+  2) Parse what's actually been passed.
+  3) Access the values passed with these arguments through the special
+     sub-functions of CliArgs designed for these purposes.
+
+
+  DEFINING ARGUMENTS
+  ------------------
+  To define which arguments are to be accepted and provide certain rules
+  which these arguments should follow, use the `CliArgs define` function. The
+  Example below shows all possible options you may use (not all of them are
+  necessary) and is self-explanatory:
+
+      ...
+      CliArgs define \
+        --no-value-args='a,l:list,u:list-updates,version,b' \
+        --value-args='x,i:input-fn,o:output-fn,log-fn,y' \
+        --required-args='input-fn' \
+        --required-values='input-fn'
+        --ignore-errors
+     ...
+
+  Defining rules doesn't parse anything, it merely prepares the parser for
+  the actual arguments you're about to pass to it. The ':' separator is for
+  synonyms. That is, we can say that '-i' is the synonym to '--input-fn'.
+  `CliArgs` parser follows the UNIX conventions: the short one-dash argument
+  values are passed as de-facto separate arguments that follow the short one-dash
+  argument (that is, they use space as a separator), while values for the
+  long --two-dash arguments are provided after the "=" character, with or
+  without single or double quotation marks.
+
+  Given the definitions above, your script may now be called like this:
+
+      ...
+      MyScript -i input.txt --output-fn=output.txt
+      ...
+
+  This, of course, is just one possibility. As you can tell from the definitions,
+  some other arguments may have been provided, but, in this case - they weren't,
+  since all, but one of them, are not actually required by the definition above.
+
+  If user provided an unknown argument, or forgot to provide `--input-fn`,
+  or forgot to pass value to it, the script WILL NOT - at this point -
+  print any errors. Firstly, because we used the flag which turns off error
+  reporting and halting script execution - the `--ignore-errors` flag. Even if
+  omitted it, no errors would appear at this point. So far, we've only defined
+  arguments. It's only when we parse them, an error indicating a particular
+  mistake will be printed and then the program would exit.
+
+
+  PARSING ARGUMENTS
+  -----------------
+  This step is easy. Just call the `parse()` function providing it with
+  all the arguments you had received from the user:
+
+      CliArgs parse ${@}
+
+  At this point, if you have not used the `--ignore-errors` flag when defining
+  arguments, an error may be printed into the user's terminal and your script
+  will then exit with status 1 - in case the parser finds the that the provided
+  arguments did not follow the expected definitions.
+
+
+  ACCESSING THE VALUES
+  --------------------
+  To get access to non-positional arguments, you may use the `get_value`
+  function and provide it with an argument name. The argument name may be passed
+  in various forms - given the definition we used above, the following lines
+  of code would each produce the same output:
+
+      CliArgs get_value i
+      CliArgs get_value -i
+      CliArgs get_value --input-fn
+      CliArgs get_value input-fn
+      CliArgs get_value input_fn
+
+  This, of course, will print the values into the terminal, so you might want to
+  save the output into a variable or capture its value in a subprocess and use
+  it with the `if` statement:
+
+      if [[ -d "$(CliArgs get_value input_fn)" ]]; then
+        >&2 echo "Cannot read the input file - it's a directory."
+        exit 1
+      fi
+
+  For arguments that do not require an explicit value, the default value "yes"
+  will be returned.
+
+  To access POSITIONAL arguments, use the `CliArgs pos_arg` function:
+
+      local description="$(CliArgs pos_arg 0)"
+
+  Indexes start with 0, not 1.
+
+
+MULTIPLE CALLS AND NAMESPACES
+-----------------------------
+It may very often be the case that you would want to use `CliArgs` multiple
+times for various functions or inside the sourced scripts. If you do it
+the usual way, you may bump into issues if you have calls to functions
+such as `CliArgs get_value` or `CliArgs pos_arg` scattered across your program.
+
+In order to clearly separate multiple definitions, calls to the parser and
+accessing values, you should use the prefix environment variable `$CLIARGS_NS`
+("NS" stands for "namespace"), for instance:
+
+    ...
+    CLIARGS_NS=main CliArgs define ...
+    CLIARGS_NS=main CliArgs parse ...
+    ...
+    CLIARGS_NS=function1 CliArgs define ...
+    CLIARGS_NS=function1 CliArgs parse ...
+    ...
+    CLIARGS_NS=main CliArgs get_value 'input_fn'
+    CLIARGS_NS=function1 pos_arg 0
+    ...
+
+
+THINGS THAT CLI-ARGS DOESN'T DO FOR YOU
+---------------------------------------
+It's important to differentiate between the things that are simply not yet
+implemented, but should be, and things that shall not be a part of this library.
+
+First, let's list the things that are simply not implemented yet, but are
+desirable to have in a cli-parser library:
+
+  1) Combining short arguments: when `-xyz` means the same as `-x -y -z`.
+
+  2) Strict separation between arguments that do not require value at all
+     and arguments that require a value to be provided explicitly.
+
+     Currently, users may still provide random values to arguments listed
+     as `--no-value-args` when calling `CliArgs define`. This isn't too critical,
+     though, because for arguments that don't require an explicit value, you
+     normally only want to check whether they're present or not, so what was
+     provided as the actual value (the default "yes" or something else)
+     shouldn't matter.
+
+Things that will probably never be implemented, as they shall be the
+responsibility of script authors:
+
+  1) Various validations for argument values, such as length, type (numeric or
+     string or whatnot), or regular expression matching.
+
+  2) Arguments order. In fact positional arguments can easily be mixed with
+     non-positional ones, provided that `-a [SPACE] value` one-dash argument
+     convention is accounted for.
+
+
+MORE EXAMPLES
+-------------
+For more usage examples, see the unit tests in ./cli-args.test.sh

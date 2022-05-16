@@ -177,6 +177,11 @@ CliArgs() {
       sed 's/-/_/g'
   }
 
+  pos_arg() {
+    local pos_args=( $(get_namespace_var 'POS_ARG_VALUES') )
+    echo "${pos_args[$1]}"
+  }
+
   define() {
 
     local allowed=(

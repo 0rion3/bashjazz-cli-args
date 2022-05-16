@@ -10,7 +10,7 @@ CliArgs define \
   --no-value-args='a,l:list,u:list-updates,version,b' \
   --value-args='x,i:input-fn,o:output-fn,log-fn,y' \
   --required-args='input-fn' \
-  --required-values='input-fn' \
+  --required-values='input-fn'
 
 utest begin CliArgs \
 'Parses and separates cli-args into positional & non-positional'
@@ -118,6 +118,13 @@ utest begin CliArgs \
         utest assert "$UTOUT" == 'input.txt'
       utest end single_dash_argument
     utest end get_value
+
+    utest begin get_positional_arg_value
+      utest cmd CliArgs pos_arg 0
+      utest assert "$UTOUT" == "pos_value_1"
+      utest cmd CliArgs pos_arg 1
+      utest assert "$UTOUT" == "pos_value_2"
+    utest end get_positional_arg_value
 
     utest begin with_correct_args
       utest assert "$(utest get_namespace_var ARG_VALUES a)"    == 'yes'
