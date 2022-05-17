@@ -51,7 +51,7 @@ Then, there are the following three steps:
         --no-value-args='a,l:list,u:list-updates,version,b' \
         --value-args='x,i:input-fn,o:output-fn,log-fn,y' \
         --required-args='input-fn' \
-        --required-values='input-fn'
+        --required-values='input-fn' \
         --ignore-errors
      ...
 
