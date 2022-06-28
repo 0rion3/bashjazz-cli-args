@@ -54,8 +54,8 @@ CliArgs() {
 
   # $1 = arr_name (without the namespace, example: ARG_DEF_all_args)
   # $2 = arr_index (integer)
-  get_namespace_var() {
-    var_name="${1}_FOR_${CLIARGS_NS}"
+  namespace_var_value() {
+    local var_name="${1}_FOR_${CLIARGS_NS}"
 
     if [[ "${!var_name}" == "-A"* ]]; then
       local i="$2"
@@ -112,9 +112,9 @@ CliArgs() {
     local arg_name=$(echo "$1" | sed 's/^--//' | sed 's/^-//g' | sed 's/-/_/g')
 
     local names=($(
-      echo "$(get_namespace_var ARG_DEF_all_args)" | sed -E 's/[a-zA-Z0-9_]+[:]//g'
+      echo "$(namespace_var_value ARG_DEF_all_args)" | sed -E 's/[a-zA-Z0-9_]+[:]//g'
     ))
-    local synonyms=( $(get_namespace_var ARG_DEF_synonyms) )
+    local synonyms=( $(namespace_var_value ARG_DEF_synonyms) )
 
     local result="$(echo "${names[@]}"   | \
       grep -oE "(^|\s|:)$arg_name(\s|$)" | \
@@ -133,15 +133,11 @@ CliArgs() {
 
   get_value() {
     local arg_name="$(get_name "$1")"
-    local result=$?
-    if [[ $result == 0 ]]; then
-      echo "$(get_namespace_var 'ARG_VALUES' $arg_name)"
-    fi
-    return $result
+    echo "$(namespace_var_value 'ARG_VALUES' $arg_name)"
   }
 
   arg_present?() {
-    local all_provided_args="$(get_namespace_var 'ARG_VALUES')"
+    local all_provided_args="$(namespace_var_value 'ARG_VALUES')"
     local matched_arg="$(echo "$all_provided_args" | sed 's/^-A //' | \
       grep -oE "(^|$RSEP)$1$USEP")"
     if [[ -n "$matched_arg" ]]; then
@@ -152,13 +148,9 @@ CliArgs() {
   }
 
   arg_known?() {
-    local all_known_args="$( \
-      get_namespace_var ARG_DEF_all_args | sed 's/:/ /g' | sed 's/-/_/g')"
-    if [[ -n "$(Array_contains $1 $all_known_args)" ]]; then
-      echo "yes" && return 0
-    else
-      echo "" && return 1
-    fi
+    local all_known_args="$(namespace_var_value ARG_DEF_all_args | sed 's/:/ /g' | sed 's/-/_/g')"
+    echo "$all_known_args" | grep -oE "(^| )$1( |$)"
+    return $?
   }
 
   arg_has_value?() {
@@ -178,15 +170,15 @@ CliArgs() {
   }
 
   pos_arg() {
-    local pos_args=( $(get_namespace_var 'POS_ARG_VALUES') )
+    local pos_args=( $(namespace_var_value 'POS_ARG_VALUES') )
     echo "${pos_args[$1]}"
   }
 
   define() {
 
     local allowed=(
-      no_value_args default_value_args value_args required_args required_values \
-      ignore_errors
+      no_value_args default_values value_args
+      required_args required_values ignore_errors
     )
     local args=( ${@} )
     local out
@@ -194,13 +186,13 @@ CliArgs() {
     local no_value_args
     local value_args
     local required_args
+    local default_values
 
     for arg in "${args[@]}"; do
 
       local arg_name="$(extract_arg_name "$arg")"
       Array_contains $arg_name "${allowed[@]}" > /dev/null || continue
       local value="$(extract_arg_value "$arg")"
-
       if [[ "$arg_name" =~ ^((no_)?value|required)_(args|values)$ ]]; then
         if [[ "$arg_name" =~ ^(no_)?value_args$ ]]; then
           all_args+="$value "
@@ -217,6 +209,7 @@ CliArgs() {
     declare_namespace_var -a 'ARG_DEF_all_args'        "$all_args"
     declare_namespace_var -a 'ARG_DEF_no_value_args'   "$no_value_args"
     declare_namespace_var -a 'ARG_DEF_value_args'      "$value_args"
+    declare_namespace_var -a 'ARG_DEF_default_values'  "$default_values"
     declare_namespace_var -a 'ARG_DEF_required_args'   "$required_args"
     declare_namespace_var -a 'ARG_DEF_required_values' "$required_values"
     declare_namespace_var -a 'ARG_DEF_synonyms'        "$synonyms"
@@ -256,15 +249,22 @@ CliArgs() {
               arg_value="$ARG_VALUE_TRUE"
             fi
           fi
+
         elif [ $arg_type = 2 ]; then
-          arg_name="$(get_name $(extract_arg_name "$arg"))"
-          if [[ -n "$(namespace_var_contains ARG_DEF_value_args $arg_name)" ]]; then
-            arg_value="$(extract_arg_value "$arg")"
-          else
-            arg_value="${arg_value:-$ARG_VALUE_TRUE}"
+          arg_name="$(get_name $(extract_arg_name $arg))"
+          arg_value="$(extract_arg_value $arg)"
+        fi
+
+        # Setting default values for arguments
+        # ------------------------------------
+        if [[ -z "$arg_value" ]] && [[ -n $arg_name ]]; then
+          local default_arg_values="$(namespace_var_value ARG_DEF_default_values)"
+          if [[ -n "$(echo "$default_arg_values" | grep -E "(^| )$arg_name:")" ]]; then
+            arg_value="$(echo "$default_arg_values" |\
+              grep -Eo "(^| )$arg_name:[^ ]+?( |$)"  | sed -E "s/ ?$arg_name://")"
+          elif [[ -n "$(namespace_var_contains ARG_DEF_no_value_args $arg_name)" ]]; then
+            arg_value="$ARG_VALUE_TRUE"
           fi
-          arg_name="${arg_name:-$(echo "$arg" | \
-            sed 's/^--//' | sed 's/-/_/g' | sed 's/=$//')}"
         fi
 
       else
@@ -276,29 +276,33 @@ CliArgs() {
 
       local arg_name="${arg_name:-$prev_arg_name}"
 
-      # Checking whether a given argument or its value is valid.
-      # Being valid right now basically means whether the argument
-      # is allowed and whether it requires a value. There's one more check
-      # outside of this `for` loop, which checks if required arguments
-      # are present at all - but that's about it for now. Further rules for
-      # argument values shall be implemented by CliArg users in their
-      # respective Bash scripts.
+      if [[ -z "$(arg_known? $arg_name)" ]]; then
+        print_error $arg_name $NULL_SYM "unknown argument"
+        return 1
+      fi
+
+      # Checking whether a given argument or its value are valid.
+      # Being valid means whether several things:
+      #
+      # 1. Argument is allowed by previous call of `CliArgs define`
+      # 2. Argument requires a value and has been provided with one or the
+      #    `CliArgs define` provide a default value for it.
+      #
+      # NOTE:
+      #   There's one more check outside of this `for` loop, which checks if required arguments
+      #   are present at all - but that's about it for now. Further rules for
+      #   argument values shall be implemented by CliArg users in their
+      #   respective Bash scripts.
       #
       # All errors are ignored if `CliArgs define` was called
       # with `--ignore-errors`.
       if [[ -n $arg_name ]] && \
          [[ -z "$(namespace_var_contains ARG_DEF_ignore_errors)" ]]; then
 
-        # 1. Check if it's on the list of accepted arguments
-        if [[ -z "$(arg_known? $arg_name)" ]]; then
-          print_error $arg_name "_" "unknown argument" && return 1
-        fi
-
-        # 2. Check if argument requires value and it is provided
         if [[ "$(namespace_var_contains ARG_DEF_required_values $arg_name)" ]] &&
            [[ -z "$arg_value" ]]; then
-           print_error $arg_name $NULL_SYM \
-             "missing required value for argument" && return 1
+           print_error $arg_name $NULL_SYM "missing required value for argument"
+           return 1
         fi
 
       fi
@@ -315,7 +319,7 @@ CliArgs() {
     done
 
     if [[ -z "$(namespace_var_contains ARG_DEF_ignore_errors)" ]]; then
-      local required_args=( $(get_namespace_var ARG_DEF_required_args) )
+      local required_args=( $(namespace_var_value ARG_DEF_required_args) )
       for r in "${required_args[@]}"; do
         if [[ -z "$(arg_present? "$r")" ]]; then
           print_error "$r" "$NULL_SYM" "required argument is missing"

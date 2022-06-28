@@ -6,11 +6,13 @@ source $BASHJAZZ_PATH/utest/utest.sh
 
 # This "sets the stage" for all unit test, as the will be checking against
 # the same set of arguments and synonyms below.
+
 CliArgs define \
   --no-value-args='a,l:list,u:list-updates,version,b' \
-  --value-args='x,i:input-fn,o:output-fn,log-fn,y' \
+  --value-args='x,i:input-fn,o:output-fn,log-fn,y,e:encrypt,m:mountpoint,d' \
   --required-args='input-fn' \
-  --required-values='input-fn'
+  --required-values='input-fn' \
+  --default-values='encrypt:yes,device:/dev/sde1,mountpoint:/mnt/abc1'
 
 utest begin CliArgs \
 'Parses and separates cli-args into positional & non-positional'
@@ -24,21 +26,23 @@ utest begin CliArgs \
     CliArgs declare_namespace_var -A assoc_var "$assoc"
 
     utest begin declaration
-      utest assert "$(utest get_namespace_var str_var)"   == 'hello world'
-      utest assert "$(utest get_namespace_var arr_var 0)" == 'hello'
-      utest assert "$(utest get_namespace_var arr_var 1)" == 'world'
-      utest assert "$(utest get_namespace_var assoc_var greeting)" == 'hello'
-      utest assert "$(utest get_namespace_var assoc_var address)" == 'world'
+      utest assert "$(utest namespace_var_value ARG_DEF_default_values)" == \
+        'encrypt:yes device:/dev/sde1 mountpoint:/mnt/abc1'
+      utest assert "$(utest namespace_var_value str_var)"   == 'hello world'
+      utest assert "$(utest namespace_var_value arr_var 0)" == 'hello'
+      utest assert "$(utest namespace_var_value arr_var 1)" == 'world'
+      utest assert "$(utest namespace_var_value assoc_var greeting)" == 'hello'
+      utest assert "$(utest namespace_var_value assoc_var address)" == 'world'
     utest end declaration
 
     utest begin appending_value
       CliArgs append_to_namespace_var str_var 'from utest' # space is intentional
       CliArgs append_to_namespace_var arr_var 'from utest'
       CliArgs append_to_namespace_var assoc_var "from${USEP}utest"
-      utest assert "$(utest get_namespace_var str_var)"   == 'hello world from utest'
-      utest assert "$(utest get_namespace_var arr_var 2)" == 'from'
-      utest assert "$(utest get_namespace_var arr_var 3)" == 'utest'
-      utest assert "$(utest get_namespace_var assoc_var from)" == 'utest'
+      utest assert "$(utest namespace_var_value str_var)"   == 'hello world from utest'
+      utest assert "$(utest namespace_var_value arr_var 2)" == 'from'
+      utest assert "$(utest namespace_var_value arr_var 3)" == 'utest'
+      utest assert "$(utest namespace_var_value assoc_var from)" == 'utest'
     utest end appending_value
 
     unset assoc
@@ -83,21 +87,21 @@ utest begin CliArgs \
 
   utest begin define \
   'Defines the rules according to which arguments are parsed and accepted/rejected'
-    utest assert "$(utest get_namespace_var ARG_DEF_all_args)" == \
-      'a l:list u:list_updates version b x i:input_fn o:output_fn log_fn y'
-    utest assert "$(utest get_namespace_var ARG_DEF_no_value_args)" == \
+    utest assert "$(utest namespace_var_value ARG_DEF_all_args)" == \
+      'a l:list u:list_updates version b x i:input_fn o:output_fn log_fn y e:encrypt m:mountpoint d'
+    utest assert "$(utest namespace_var_value ARG_DEF_no_value_args)" == \
       'a list list_updates version b'
-    utest assert "$(utest get_namespace_var ARG_DEF_value_args)" == \
-      'x input_fn output_fn log_fn y'
-    utest assert "$(utest get_namespace_var ARG_DEF_required_args)" == 'input_fn'
-    utest assert "$(utest get_namespace_var ARG_DEF_synonyms)" == \
-      'a l u version b x i o log_fn y'
+    utest assert "$(utest namespace_var_value ARG_DEF_value_args)" == \
+      'x input_fn output_fn log_fn y encrypt mountpoint d'
+    utest assert "$(utest namespace_var_value ARG_DEF_required_args)" == 'input_fn'
+    utest assert "$(utest namespace_var_value ARG_DEF_synonyms)" == \
+      'a l u version b x i o log_fn y e m d'
   utest end define
 
   utest begin parse
 
     utest cmd CliArgs parse \
-      -a -l --list-updates --version \
+      -a -l --list-updates --version --mountpoint \
       -i input.txt --output-fn=output.txt pos_value_1 pos_value_2
 
     utest begin get_value
@@ -126,23 +130,30 @@ utest begin CliArgs \
       utest assert "$UTOUT" == "pos_value_2"
     utest end get_positional_arg_value
 
+    utest begin assigns_default_values_to_args \
+    "args listed under --value-required-args get a default value if none provided"
+      utest cmd CliArgs get_value mountpoint
+      utest assert "$UTOUT" == "/mnt/abc1"
+    utest end
+
     utest begin with_correct_args
-      utest assert "$(utest get_namespace_var ARG_VALUES a)"    == 'yes'
-      utest assert "$(utest get_namespace_var ARG_VALUES list)" == 'yes'
-      utest assert "$(utest get_namespace_var ARG_VALUES list_updates)" == 'yes'
-      utest assert "$(utest get_namespace_var ARG_VALUES input_fn)" == 'input.txt'
-      utest assert "$(utest get_namespace_var ARG_VALUES output_fn)" == 'output.txt'
-      utest assert "$(utest get_namespace_var POS_ARG_VALUES 0)" == 'pos_value_1'
-      utest assert "$(utest get_namespace_var POS_ARG_VALUES 1)" == 'pos_value_2'
+      utest assert "$(utest namespace_var_value ARG_VALUES a)"            == 'yes'
+      utest assert "$(utest namespace_var_value ARG_VALUES list)"         == 'yes'
+      utest assert "$(utest namespace_var_value ARG_VALUES list_updates)" == 'yes'
+      utest assert "$(utest namespace_var_value ARG_VALUES input_fn)"     == 'input.txt'
+      utest assert "$(utest namespace_var_value ARG_VALUES output_fn)"    == 'output.txt'
+      utest assert "$(utest namespace_var_value POS_ARG_VALUES 0)"        == 'pos_value_1'
+      utest assert "$(utest namespace_var_value POS_ARG_VALUES 1)"        == 'pos_value_2'
     utest end with_wrong_args
 
     utest begin with_uknown_args
-      utest cmd CliArgs parse -i input.txt --hello
+      utest cmd CliArgs parse --input-fn=file.txt --unknown
       utest assert --error "$UTERR" contains "unknown argument"
     utest end with_uknown_args
 
     utest begin with_required_value_missing
-      utest cmd CliArgs parse --input-fn
+
+      utest cmd CliArgs parse --input-fn --inknown
       utest assert --error "$UTERR" contains "missing required value for argument"
     utest end with_wrong_arg_values
 
