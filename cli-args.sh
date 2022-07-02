@@ -174,6 +174,15 @@ CliArgs() {
     echo "${pos_args[$1]}"
   }
 
+  all_pos_args() {
+    echo "$(namespace_var_value 'POS_ARG_VALUES')"
+  }
+
+  pos_args_count() {
+    local pos_args=( all_pos_args )
+    echo "${!pos_args}"
+  }
+
   define() {
 
     local allowed=(
